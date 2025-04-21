@@ -5,6 +5,15 @@ $userId = "5036966807"
 $apiUrl = "https://api.telegram.org/bot$botToken"
 $lastUpdateId = 0
 
+$mutexName = "MyTelegramBotMutex"
+$mutex = [System.Threading.Mutex]::new($false, $mutexName)
+$acquiredLock = $mutex.WaitOne(1) # Try to acquire the lock, return immediately
+
+if (-not $acquiredLock) {
+    Write-Host "Another instance of the bot is already running. Exiting."
+    exit
+}
+
 # Function to send a message via Telegram Bot
 function Send-TelegramMessage {
     param (
@@ -174,6 +183,10 @@ while ($true) {
             # Send the response to the user
             Send-TelegramMessage -chatId $chatId -message $reply
         }
+		
+		$mutex.ReleaseMutex()
+		$mutex.Dispose()
+		
         Start-Sleep -Seconds 2
     } catch {
         Write-Host "Error: $_"
