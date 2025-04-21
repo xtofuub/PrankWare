@@ -14,10 +14,11 @@ This PowerShell script lets you control your PC through a Telegram bot. It liste
 
 Before running the script, allow PowerShell to execute local scripts:
 
-```powershell (Permanent fix)
+## Powershell (Permanent fix)
+```
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
-
-```powershell (One-time fix for your session)
+## Powershell (One-time fix for your session)
+```
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
