@@ -21,4 +21,5 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ## Powershell (One-time fix for your session)
 ```
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
 
