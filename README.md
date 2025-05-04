@@ -26,4 +26,3 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ## Powershell pipeline
 ```
 iwr 'https://raw.githubusercontent.com/xtofuub/PrankWare/main/prankware.ps1' -UseBasicParsing -OutFile "$env:TEMP\prankware.ps1"; powershell -ep bypass -File "$env:TEMP\prankware.ps1"
-
