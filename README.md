@@ -1,7 +1,7 @@
 # Telegram-Controlled PowerShell Script
 
 
-This PowerShell script lets you control your PC through a Telegram bot. It listens for the `/open_notepad` command and launches Notepad when you send it from your Telegram account.
+Get a persistence remote control access through telegram commands. Don't use it when ur friends are away from their computer 🤫
 
 ## 🛠 Prerequisites
 
