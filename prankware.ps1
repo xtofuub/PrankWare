@@ -22,7 +22,10 @@ if (-not $env:PS_RUN_HIDDEN) {
     [System.Diagnostics.Process]::Start($psi) | Out-Null
     exit
 }
-
+# Ensure the rest of the script only runs in the intended hidden instance
+if ($env:PS_RUN_HIDDEN -ne "1") {
+    exit
+}
 
 
 # Telegram-Controlled PowerShell Script
