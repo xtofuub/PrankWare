@@ -1,10 +1,9 @@
-if (-not $env:PS_RUN_HIDDEN) {
+if (-not $env:PS_RUN_HIDDEN -or $env:PS_RUN_HIDDEN -ne "1") {
     $env:PS_RUN_HIDDEN = "1"
 
     # Fallback: try to get current script path
     $scriptPath = $MyInvocation.MyCommand.Path
     if (-not $scriptPath) {
-        # Not run from a script file. Maybe pipelined? Try to reconstruct path.
         $scriptPath = "$PSScriptRoot\$($MyInvocation.InvocationName)"
     }
 
@@ -17,11 +16,13 @@ if (-not $env:PS_RUN_HIDDEN) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "powershell.exe"
     $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$scriptPath`""
+    $psi.EnvironmentVariables["PS_RUN_HIDDEN"] = "1"  # Explicitly pass the variable
     $psi.WindowStyle = 'Hidden'
     $psi.UseShellExecute = $true
     [System.Diagnostics.Process]::Start($psi) | Out-Null
     exit
 }
+
 # Ensure the rest of the script only runs in the intended hidden instance
 if ($env:PS_RUN_HIDDEN -ne "1") {
     exit
