@@ -326,8 +326,8 @@ ls or dir - List files and folders.
 
 # --- ALL FUNCTION DEFINITIONS END HERE ---
 
-$botToken = "7641108006:AAFVWvnrm8MqTLEi9lsi0ZIVuflDW-l_aOg"
-$userId = "5036966807"
+$botToken = "meowurtoken"
+$userId = "uruserid"
 $apiUrl = "https://api.telegram.org/bot$botToken"
 $lastUpdateId = 0 # Initial default
 
