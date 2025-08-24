@@ -1,3 +1,5 @@
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+
 if (-not $env:PS_RUN_HIDDEN -or $env:PS_RUN_HIDDEN -ne "1") {
     $env:PS_RUN_HIDDEN = "1"
 
