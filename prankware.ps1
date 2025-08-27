@@ -529,8 +529,8 @@ COMMAND EXECUTION
 
 # --- ALL FUNCTION DEFINITIONS END HERE ---
 
-$botToken = "urtoken"
-$userId = "urid"
+$botToken = "urbot"
+$userId = "urID"
 $apiUrl = "https://api.telegram.org/bot$botToken"
 $lastUpdateId = 0 # Initial default
 
@@ -678,8 +678,11 @@ while ($true) {
                 continue
             }
             elseif ($text -eq "/confirm-restart") {
-                shutdown /r /t 0
-                $reply = "Restarting system..."
+                Send-TelegramMessage -chatId $chatId -message "Restarting system in 10 seconds. Please wait..."
+                Start-Sleep -Seconds 2
+                Start-Process -FilePath "shutdown.exe" -ArgumentList "/r /t 8"
+                $reply = "System will restart in 8 seconds."
+                exit
             }
             elseif ($text -eq "/shutdown") {
                 Send-TelegramMessage -chatId $chatId -message "Are you sure you want to shut down the system? Send '/confirm-shutdown' to confirm."
