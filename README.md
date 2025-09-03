@@ -1,4 +1,7 @@
+## ⚠️ DISCLAIMER
 
+> [!WARNING]
+> **This script is for educational purposes only. Do NOT use it on systems you do not own or have explicit permission to test. Misuse may be illegal and can have serious consequences.**
 
 # Telegram-Controlled PowerShell Script
 
