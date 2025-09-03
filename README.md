@@ -14,7 +14,6 @@ This script allows you to control a Windows system remotely through Telegram, of
 * Windows 10 or newer
 * PowerShell 5 or later (built-in)
 * Internet connection
-* [ffmpeg](https://ffmpeg.org/download.html) installed and in system PATH (for audio/video recording)
 * A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 * Your own Telegram user ID (use [@userinfobot](https://t.me/userinfobot))
 
